@@ -1,4 +1,5 @@
-import React, { useRef, useContext } from 'react';
+/* eslint-disable */
+import React, { useRef, useContext, useState } from 'react';
 import Button from '@enact/sandstone/Button';
 import Scroller from '@enact/sandstone/Scroller';
 import { MediaControls } from '@enact/sandstone/MediaPlayer';
@@ -9,12 +10,23 @@ import { useMainState } from './MainState'; // MainState에서 가져오기
 import './VideoPlayer.css'; // CSS 파일 추가
 import { useBackHandler } from '../App/AppState'; // useBackHandler 가져오기
 import ImageItem from '@enact/sandstone/ImageItem'; // 썸네일 이미지 아이템 추가
+import Popup from '@enact/sandstone/Popup'; // Popup 컴포넌트 가져오기
+import Input, { InputField } from '@enact/sandstone/Input'; // InputField 가져오기
+
+
 
 const SelectableVideoPlayer = ({ video, startTime }) => {
     const videoRef = useRef(null);
     const { loadWatchTime, saveWatchTime, videoData } = useMainState(); // 비디오 데이터 가져오기
     const { setPanelData } = useContext(PanelContext); // 패널 데이터 설정 함수 가져오기
     const handleBack = useBackHandler();
+    const [isPopupOpen, setIsPopupOpen] = useState(false); // 팝업 상태 관리
+    const [isBotOpen, setIsBotOpen] = useState(false); // 팝업 상태 관리
+    const [comment, setComment] = useState(''); // 댓글 상태 관리
+    const [messages, setMessages] = useState([]); // 챗봇 메시지 상태 관리
+    
+    
+    
 
     const handleGoToDetails = () => {
         const videoNode = videoRef.current.getVideoNode(); // 비디오 노드 가져오기
@@ -44,14 +56,6 @@ const SelectableVideoPlayer = ({ video, startTime }) => {
         }
     };
 
-    const handlePlayFromStart = () => {
-        const videoNode = videoRef.current.getVideoNode(); // 비디오 노드 가져오기
-        
-        if (videoNode) {
-            videoNode.play(); // 비디오 재생 시작
-        }
-    };
-
     const setVideo = (video) => {
         videoRef.current = video; // 비디오 설정
     };
@@ -67,6 +71,45 @@ const SelectableVideoPlayer = ({ video, startTime }) => {
         // 클릭된 썸네일 비디오로 이동
         setPanelData(prev => [...prev, { name: 'videoPlay', data: { video: thumbnailVideo } }]); // 해당 비디오 재생 패널로 이동
     };
+
+    const handleSendMessage = async () => {
+        if (comment.trim() === '') return; // 빈 메시지 전송 방지
+    
+        setMessages(prev => [...prev, { sender: 'user', text: comment }]);
+    
+        try {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer `, // 여기에 실제 API 키를 입력하세요
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini', // 사용할 모델
+                    messages: [
+                        { role: 'system', content: "You are a helpful assistant." },
+                        { role: 'user', content: comment },
+                    ],
+                }),
+            });
+    
+            const data = await response.json();
+    
+            if (response.ok) {
+                const botMessage = data.choices[0].message.content; // 챗봇의 응답
+                setMessages(prev => [...prev, { sender: 'bot', text: botMessage }]);
+            } else {
+                console.error('Error from OpenAI API:', data);
+                setMessages(prev => [...prev, { sender: 'bot', text: '챗봇 응답을 받을 수 없습니다.' }]);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            setMessages(prev => [...prev, { sender: 'bot', text: '네트워크 오류가 발생했습니다.' }]);
+        }
+    
+        setComment(''); // 댓글 입력 초기화
+    };
+    
 
     return (
         <Panel>
@@ -87,17 +130,14 @@ const SelectableVideoPlayer = ({ video, startTime }) => {
                     ref={setVideo}
                     style={{ width: '100%', height: '100%' }} // 전체 화면 차지
                     onEnded={handleVideoEnd} // 비디오 종료 시 핸들러 추가
-                    onLoadedData={startTime > 0 ? handleLoadedData : handlePlayFromStart} // startTime에 따라 호출되는 핸들러 설정
+                    onLoadedData={startTime > 0 ? handleLoadedData : null} // startTime에 따라 호출되는 핸들러 설정
                 >
                     <MediaControls>
                         <Button onClick={handleGoToDetails}>Go to Details</Button> {/* 디테일로 이동 버튼 */}
-                        <Button onClick={() => {
-                            const videoNode = videoRef.current.getVideoNode(); // 비디오 노드 가져오기
-                            if (videoNode) {
-                                const currentTime = videoNode.currentTime; // 현재 시간 가져오기
-                                saveWatchTime(video.id, currentTime); // 현재 시간을 저장
-                            }
-                        }}>Resume Watching</Button> {/* 이어보기 버튼 추가 */}
+                        
+                        <Button onClick={() => setIsPopupOpen(true)}>댓글</Button> {/* 팝업 버튼 추가 */}
+                        <Button onClick={() => setIsBotOpen(true)}>챗봇</Button> 
+
                         <Button onClick={() => {
                             const videoNode = videoRef.current.getVideoNode(); // 비디오 노드 가져오기
                             if (videoNode) {
@@ -127,9 +167,60 @@ const SelectableVideoPlayer = ({ video, startTime }) => {
                             )) : <div>비디오가 없습니다.</div>}
                         </Scroller>
                     </MediaControls>
+                    
                     <source src={video.src} type="video/mp4" />
                 </VideoPlayer>
             </div>
+
+            {/* 확인 팝업 (내용이 있는 스크롤 구현) */}
+            <Popup
+                open={isPopupOpen}
+                onClose={() => setIsPopupOpen(false)}
+                style={{ maxWidth: '100%', maxHeight: '300px' }} // 팝업의 최대 크기 제한
+            >
+                <Scroller style={{ maxHeight: '200px' }}> {/* 스크롤러 추가 */}
+                    {Array.from({ length: 15 }).map((_, index) => (
+                        <h5 style={{ fontSize: '0.8rem', margin: 0 }} key={index}>
+                            아 진짜 하기 싫다
+                            <h5 style={{ fontSize: '0.5rem', margin: 0 }}>
+                                @임대규 15:31
+                            </h5>
+                        </h5>
+                    ))}
+                </Scroller>
+                <InputField
+                    placeholder="댓글을 입력하세요..."
+                    value={comment}
+                    onChange={(e) => setComment(e.value)} // 댓글 상태 업데이트
+                    style={{ marginTop: '10px' }} // 입력창 위 여백
+                />
+                <Button onClick={() => {
+                    console.log("댓글 남기기:", comment);
+                    setComment(''); // 댓글 입력 초기화
+                }}>댓글 남기기</Button>
+            </Popup>
+
+            <Popup
+                open={isBotOpen}
+                onClose={() => setIsBotOpen(false)}
+                style={{ maxWidth: '100%', maxHeight: '300px' }} // 팝업의 최대 크기 제한
+            >
+                <Scroller style={{ maxHeight: '200px' }}>
+                {messages.map((msg, index) => (
+                <div key={index} style={{ margin: '5px 0' }}>
+                    <strong>{msg.sender === 'user' ? 'User:' : 'Bot:'}</strong> {msg.text}
+                </div>
+                ))}
+                </Scroller>
+                <InputField
+                placeholder="메시지를 입력하세요..."
+                value={comment}
+                onChange={(e) => setComment(e.value)} // 메시지 상태 업데이트
+                style={{ marginTop: '10px' }} // 입력창 위 여백
+                />
+                <Button onClick={handleSendMessage}>전송</Button>
+            </Popup>
+
         </Panel>
     );
 };
